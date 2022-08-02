@@ -42,8 +42,10 @@ class TagInterface:
 
     def dwm_pos_get(self):
         typ, length, value = self.request(self.TLV_DWM_POS_GET)
-        # do stuff here
-        
+        # N.B. assume that type and length are appropriate values.
+        x_mm, y_mm, z_mm, quality = struct.unpack('<iiiB', value) 
+        return x_mm, y_mm, z_mm, quality
+ 
     def dwm_label_read(self):
         typ, length, value = self.request(self.TLV_DWM_LABEL_READ)
         label = value.decode('utf-8')
@@ -88,4 +90,6 @@ if __name__ == '__main__':
     port = sys.argv[1]
     interface = TagInterface(port) 
     interface.dwm_label_read()
+    while True:
+        print(interface.dwm_pos_get())
     interface.shutdown()
