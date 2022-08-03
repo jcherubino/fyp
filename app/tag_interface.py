@@ -10,10 +10,9 @@ import enum
 import struct
 import logging
 import logging.config
-from typing import Optional
 from logger_config import LOG_DICT_CONFIG
 
-logger: Optional[logging.Logger] = None
+logger = logging.getLogger(__name__)
 
 class TagInterface:
     '''
@@ -44,6 +43,7 @@ class TagInterface:
         typ, length, value = self.request(self.TLV_DWM_POS_GET)
         # N.B. assume that type and length are appropriate values.
         x_mm, y_mm, z_mm, quality = struct.unpack('<iiiB', value) 
+        logger.debug('dwm_pos_get: %d, %d, %d', x_mm, y_mm, quality)
         return x_mm, y_mm, z_mm, quality
  
     def dwm_label_read(self):

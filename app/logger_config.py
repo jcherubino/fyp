@@ -1,6 +1,7 @@
 
 LOG_DICT_CONFIG = {
     'version': 1,
+    'disable_existing_loggers': True,
     'formatters': {
         'standard': {
             'format': '[%(levelname)s] %(asctime)s %(name)s: %(message)s'
@@ -21,9 +22,11 @@ LOG_DICT_CONFIG = {
             'backupCount': 3,
             }
         },
-    'root': {
-        'handlers': ['default', 'file_handler'],
-        'level': 'DEBUG',
+    'loggers': {
+        '': {
+            'handlers': ['default', 'file_handler'],
+            'level': 'DEBUG',
+        },
     }
 }
 
