@@ -1,7 +1,7 @@
 
 LOG_DICT_CONFIG = {
     'version': 1,
-    'disable_existing_loggers': True,
+    'disable_existing_loggers': False,
     'formatters': {
         'standard': {
             'format': '[%(levelname)s] %(asctime)s %(name)s: %(message)s'
