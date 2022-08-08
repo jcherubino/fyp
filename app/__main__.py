@@ -45,7 +45,7 @@ class MainWindow(QWidget):
 
 
         self.anchor_plot = self.plot_widget.plot(ANCHOR_X, ANCHOR_Y, pen=None, symbol='o',
-                symbolBrush='r')
+                symbolBrush='b')
 
         self.plot_widget.setXRange(min(ANCHOR_X), max(ANCHOR_X))
         self.plot_widget.setYRange(min(ANCHOR_Y), max(ANCHOR_Y))
@@ -55,6 +55,8 @@ class MainWindow(QWidget):
         fall, px, py, qf, ax, ay, az = self.interface.read_data()
         self.tag_plot = self.plot_widget.plot([px], [py], pen=None, symbol='o',
                 symbolBrush='g')
+
+        self.fall_plot = self.plot_widget.plot([], [], pen=None, symbol='x', symbolBrush='r')
         self.timer = QTimer()
         self.timer.setInterval(10)
         self.timer.timeout.connect(self.update)
@@ -66,6 +68,10 @@ class MainWindow(QWidget):
         self.tag_plot.setData([px], [py])
         self.quality_slider.setValue(qf)
         self.quality_label.setText(str(qf))
+
+        if fall:
+            logger.warning('Fall detected at position %d, %d', px, py)
+            self.fall_plot.setData([px], [py])
         #logger.debug('Updating GUI') 
     
 if __name__ == '__main__':

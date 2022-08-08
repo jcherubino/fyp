@@ -33,8 +33,9 @@ class TagInterface:
         data = self.conn.readline().decode('utf-8')
         #logger.debug(data)
         fall, px, py, qf, ax, ay, az = data.split(',')
-        fall, px, py, qf, ax, ay, az = bool(fall), int(px), int(py), int(qf),\
+        fall, px, py, qf, ax, ay, az = bool(int(fall)), int(px), int(py), int(qf),\
                 int(ax), int(ay), int(az)
+        #logger.debug("fall: %d", fall)
         return fall, px, py, qf, ax, ay, az    
 
 if __name__ == '__main__':
