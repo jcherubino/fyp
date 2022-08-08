@@ -14,7 +14,7 @@ from pyqtgraph import PlotWidget
 import sys
 
 from anchors import ANCHOR_X, ANCHOR_Y
-from tag_interface import TagInterface
+from tag_serial_interface import TagInterface
 
 logger = logging.getLogger(__name__)
 
@@ -51,21 +51,22 @@ class MainWindow(QWidget):
         self.plot_widget.setYRange(min(ANCHOR_Y), max(ANCHOR_Y))
 
         self.interface = TagInterface(port)
-        initial_x, initial_y, initial_z, initial_quality = self.interface.dwm_pos_get() 
-        self.tag_plot = self.plot_widget.plot([initial_x], [initial_y], pen=None, symbol='o',
+        self.interface.reset()
+        fall, px, py, qf, ax, ay, az = self.interface.read_data()
+        self.tag_plot = self.plot_widget.plot([px], [py], pen=None, symbol='o',
                 symbolBrush='g')
         self.timer = QTimer()
-        self.timer.setInterval(100)
+        self.timer.setInterval(200)
         self.timer.timeout.connect(self.update_position)
         self.timer.start()
         logger.info('App configured')
 
     def update_position(self):
-        x, y, _, quality = self.interface.dwm_pos_get() 
-        self.tag_plot.setData([x], [y])
-        self.quality_slider.setValue(quality)
-        self.quality_label.setText(str(quality))
-        logger.debug('Updating position') 
+        fall, px, py, qf, ax, ay, az = self.interface.read_data()
+        self.tag_plot.setData([px], [py])
+        #self.quality_slider.setValue(qf)
+        #self.quality_label.setText(str(qf))
+        #logger.debug('Updating position') 
     
 if __name__ == '__main__':
     app = QApplication([])
