@@ -107,16 +107,20 @@ bool LISDH12_check_free_fall(void) {
 }
 
 //Helper to read acceleration values via i2c.
-//pdata must have space for 6 bytes of data.
-void LISDH12_read_acc_values(uint8_t *pdata) {
+//must contain 3 int16s to store data
+void LISDH12_read_acc_values(int16_t *ax, int16_t *ay, int16_t *az) {
+  uint8_t buf[6];
   uint8_t sub_address = LISDH12_OUT_X_AUTO_INC;
   dwm_i2c_write(LIS2DH12_ADDR, &sub_address, 1, 0);
-  dwm_i2c_read(LIS2DH12_ADDR, pdata, 6);
+  dwm_i2c_read(LIS2DH12_ADDR, buf, 6);
+  
+  *ax = (buf[1] << 8) | buf[0];
+  *ay = (buf[3] << 8) | buf[2];
+  *az = (buf[5] << 8) | buf[4];
 }
 
 #define FREE_FALL_POLL_INTERVAL   1000000U //us
 #define ACC_POS_POLL_INTERVAL     10000U //us
-#define USR_DATA_LEN              16 //bytes
 /**
  * Application thread
  *
@@ -127,26 +131,30 @@ void app_thread_entry(uint32_t data)
         configure_LISDH12_free_fall();
         
         uint32_t last_fall_check = 0, last_acc_pol_check = 0;
-        uint8_t user_data[USR_DATA_LEN];
+        bool fall = false;
         dwm_pos_t pos;
+        int16_t ax, ay, az;
 
 	while (1) {
 		/* Thread loop */
                 if (dwm_systime_us_get() - last_fall_check >= FREE_FALL_POLL_INTERVAL) {
                   last_fall_check = dwm_systime_us_get();
-                  if (LISDH12_check_free_fall())
-                    user_data[0] = 1; //set fall as true.
-                  else
-                    user_data[0] = 0;
+                  if (LISDH12_check_free_fall()) {
+                    //printf("Free fall!\n");
+                    fall = true;
+                  }
+                  else {
+                    //printf("Not\n");
+                    fall = false;
+                  }
                 }
                 if (dwm_systime_us_get() - last_acc_pol_check >= ACC_POS_POLL_INTERVAL) {
-                  last_acc_pol_check = dwm_systime_us_get();
+                   last_acc_pol_check = dwm_systime_us_get();
                    dwm_pos_get(&pos);
-                   memcpy(&user_data[1], &pos.x, sizeof(pos.x));
-                   memcpy(&user_data[5], &pos.y, sizeof(pos.y));
-                   memcpy(&user_data[9], &pos.qf, sizeof(pos.qf));
-                   LISDH12_read_acc_values(&user_data[10]);
-                   dwm_usr_data_write(user_data, USR_DATA_LEN, 1);
+                   LISDH12_read_acc_values(&ax, &ay, &az);
+                   printf("fall: %d, px: %ld, py: %ld, qf: %d, ax: %d, ay: %d, az: %d\n",
+                     fall, pos.x, pos.y, pos.qf, ax, ay, az);
+                   fall = false; //clear fall bool after transmission
                 }
 	}
 }
@@ -163,10 +171,11 @@ void dwm_user_start(void)
 	int rv;
 
 	dwm_shell_compile();
-	//Disabling ble by default as softdevice prevents debugging with breakpoints (due to priority)
-	//dwm_ble_compile();
+	dwm_ble_compile();
 	dwm_le_compile();
-	dwm_serial_spi_compile();
+        //N.B. don't need the uart interface as we are only using the shell style mode
+        //to printf data.
+        //dwm_serial_uart_compile();
 
 	/* Create thread */
 	rv = dwm_thread_create(THREAD_APP_PRIO, app_thread_entry, (void*)NULL,
