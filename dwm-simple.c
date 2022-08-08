@@ -152,7 +152,9 @@ void app_thread_entry(uint32_t data)
                    last_acc_pol_check = dwm_systime_us_get();
                    dwm_pos_get(&pos);
                    LISDH12_read_acc_values(&ax, &ay, &az);
-                   printf("fall: %d, px: %ld, py: %ld, qf: %d, ax: %d, ay: %d, az: %d\n",
+                   //Data order:
+                   //fall status, px, py, qf, ax, ay, az
+                   printf("%d, %ld, %ld, %d, %d, %d, %d\n",
                      fall, pos.x, pos.y, pos.qf, ax, ay, az);
                    fall = false; //clear fall bool after transmission
                 }
