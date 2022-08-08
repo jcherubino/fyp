@@ -56,17 +56,17 @@ class MainWindow(QWidget):
         self.tag_plot = self.plot_widget.plot([px], [py], pen=None, symbol='o',
                 symbolBrush='g')
         self.timer = QTimer()
-        self.timer.setInterval(200)
-        self.timer.timeout.connect(self.update_position)
+        self.timer.setInterval(10)
+        self.timer.timeout.connect(self.update)
         self.timer.start()
         logger.info('App configured')
 
-    def update_position(self):
+    def update(self):
         fall, px, py, qf, ax, ay, az = self.interface.read_data()
         self.tag_plot.setData([px], [py])
-        #self.quality_slider.setValue(qf)
-        #self.quality_label.setText(str(qf))
-        #logger.debug('Updating position') 
+        self.quality_slider.setValue(qf)
+        self.quality_label.setText(str(qf))
+        #logger.debug('Updating GUI') 
     
 if __name__ == '__main__':
     app = QApplication([])
