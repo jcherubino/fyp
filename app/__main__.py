@@ -11,7 +11,9 @@ logging.config.dictConfig(LOG_DICT_CONFIG)
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QSlider, QLabel, QHBoxLayout
 from PyQt5.QtCore import QTimer, Qt
 from pyqtgraph import PlotWidget
+from pyqtgraph.opengl import GLViewWidget, GLAxisItem, GLScatterPlotItem, GLGridItem
 import sys
+import numpy as np
 
 from anchors import ANCHOR_X, ANCHOR_Y
 from tag_serial_interface import TagInterface
@@ -25,6 +27,7 @@ class MainWindow(QWidget):
         self.setWindowTitle("Localisation for HMS")
 
         self.plot_widget = PlotWidget()
+        self.plot_widget.setMinimumSize(300, 300)
         self.plot_widget.setBackground('w')
 
         self.quality_label = QLabel('0')
@@ -38,11 +41,40 @@ class MainWindow(QWidget):
         quality_layout.addWidget(self.quality_label)
         quality_layout.addWidget(self.quality_slider)
 
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-        self.layout.addWidget(self.plot_widget)
-        self.layout.addLayout(quality_layout)
+        v_layout = QVBoxLayout()
+        v_layout.addWidget(self.plot_widget)
+        v_layout.addLayout(quality_layout)
+        
+        self.layout = QHBoxLayout()
+        self.layout.addLayout(v_layout)
 
+        self.widget_3d = GLViewWidget()
+        self.widget_3d.setFixedSize(400, 400)
+        self.layout.addWidget(self.widget_3d)
+        #self.widget_3d.setBackgroundColor('w')
+
+        self.setLayout(self.layout)
+
+        self.axis_3d = GLAxisItem()
+        self.widget_3d.addItem(self.axis_3d)
+        self.axis_3d.setSize(x=5,y=5,z=5)
+
+        '''
+        gx = GLGridItem()
+        gx.rotate(90, 0, 1, 0)
+        gx.translate(-10, 0, 0)
+        self.widget_3d.addItem(gx)
+        gy = GLGridItem()
+        gy.rotate(90, 1, 0, 0)
+        gy.translate(0, -10, 0)
+        self.widget_3d.addItem(gy)
+        gz = GLGridItem()
+        gz.translate(0, 0, -10)
+        self.widget_3d.addItem(gz)
+        '''
+
+        self.scatter_3d = GLScatterPlotItem()
+        self.widget_3d.addItem(self.scatter_3d)
 
         self.anchor_plot = self.plot_widget.plot(ANCHOR_X, ANCHOR_Y, pen=None, symbol='o',
                 symbolBrush='b')
@@ -72,6 +104,10 @@ class MainWindow(QWidget):
         if fall:
             logger.warning('Fall detected at position %d, %d', px, py)
             self.fall_plot.setData([px], [py])
+        
+        
+        self.scatter_3d.setData(pos=np.array([ax,ay,az])/9000)
+        logger.debug("ax: %d ay: %d az: %d", ax, ay, az)
         #logger.debug('Updating GUI') 
     
 if __name__ == '__main__':
