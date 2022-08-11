@@ -54,8 +54,7 @@ class MainWindow(QWidget):
         #self.widget_3d.setBackgroundColor('w')
 
         self.setLayout(self.layout)
-
-        self.axis_3d = GLAxisItem()
+        self.axis_3d = GLAxisItem(glOptions='opaque')
         self.widget_3d.addItem(self.axis_3d)
         self.axis_3d.setSize(x=5,y=5,z=5)
 
@@ -105,9 +104,7 @@ class MainWindow(QWidget):
             logger.warning('Fall detected at position %d, %d', px, py)
             self.fall_plot.setData([px], [py])
         
-        
         self.scatter_3d.setData(pos=np.array([ax,ay,az])/9000)
-        logger.debug("ax: %d ay: %d az: %d", ax, ay, az)
         #logger.debug('Updating GUI') 
     
 if __name__ == '__main__':
