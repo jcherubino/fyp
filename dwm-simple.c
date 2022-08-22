@@ -119,8 +119,10 @@ void LISDH12_read_acc_values(int16_t *ax, int16_t *ay, int16_t *az) {
   *az = (buf[5] << 8) | buf[4];
 }
 
-#define FREE_FALL_POLL_INTERVAL   1000000U //us
-#define ACC_POS_POLL_INTERVAL     10000U //us
+#define FREE_FALL_POLL_INTERVAL   1000000U //us = every second (1Hz)
+#define POS_POLL_INTERVAL         100000U //us = every 100ms (10Hz)
+#define ACC_POLL_INTERVAL         20000U //us = every 20ms (50Hz)
+
 /**
  * Application thread
  *
@@ -129,16 +131,16 @@ void LISDH12_read_acc_values(int16_t *ax, int16_t *ay, int16_t *az) {
 void app_thread_entry(uint32_t data)
 {
         configure_LISDH12_free_fall();
-        
-        uint32_t last_fall_check = 0, last_acc_pol_check = 0;
+        dwm_upd_rate_set(1,1);
+        uint32_t last_fall_poll = 0, last_pos_poll = 0, last_acc_poll = 0;
         bool fall = false;
         dwm_pos_t pos;
         int16_t ax, ay, az;
 
 	while (1) {
 		/* Thread loop */
-                if (dwm_systime_us_get() - last_fall_check >= FREE_FALL_POLL_INTERVAL) {
-                  last_fall_check = dwm_systime_us_get();
+                if (dwm_systime_us_get() - last_fall_poll >= FREE_FALL_POLL_INTERVAL) {
+                  last_fall_poll = dwm_systime_us_get();
                   if (LISDH12_check_free_fall()) {
                     //printf("Free fall!\n");
                     fall = true;
@@ -148,13 +150,18 @@ void app_thread_entry(uint32_t data)
                     fall = false;
                   }
                 }
-                if (dwm_systime_us_get() - last_acc_pol_check >= ACC_POS_POLL_INTERVAL) {
-                   last_acc_pol_check = dwm_systime_us_get();
+                
+                if (dwm_systime_us_get() - last_pos_poll >= POS_POLL_INTERVAL) {
+                   last_pos_poll = dwm_systime_us_get();
                    dwm_pos_get(&pos);
+                }
+
+                if (dwm_systime_us_get() - last_acc_poll >= ACC_POLL_INTERVAL) {
+                   last_acc_poll = dwm_systime_us_get();
                    LISDH12_read_acc_values(&ax, &ay, &az);
                    //Data order:
                    //fall status, px, py, qf, ax, ay, az
-                   printf("%d, %ld, %ld, %d, %d, %d, %d\n",
+                   printf("%d,%ld,%ld,%d,%d,%d,%d\n",
                      fall, pos.x, pos.y, pos.qf, ax, ay, az);
                    fall = false; //clear fall bool after transmission
                 }
