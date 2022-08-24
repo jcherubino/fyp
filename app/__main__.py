@@ -66,7 +66,11 @@ class Worker(QObject):
     def poll(self):
         mutex.lock()
 
-        fall, px, self.py, self.qf, ax, ay, az = self.interface.read_data()
+        try:
+            fall, px, self.py, self.qf, ax, ay, az = self.interface.read_data()
+        except ValueError:
+            mutex.unlock()
+            return
 
         if fall:
             logger.warning('Fall detected at position %d, %d', px, self.py)
