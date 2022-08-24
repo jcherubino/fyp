@@ -9,7 +9,7 @@ from logger_config import LOG_DICT_CONFIG
 logging.config.dictConfig(LOG_DICT_CONFIG)
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QSlider, QLabel, QHBoxLayout
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import QTimer, Qt, QObject, QMutex, QThread
 from pyqtgraph import PlotWidget
 from pyqtgraph.opengl import GLViewWidget, GLAxisItem, GLScatterPlotItem, GLGridItem
 import sys
@@ -32,8 +32,85 @@ LPF_ORDER = 12
 
 L = 400 #window size for rolling calculations
 TAG_POLL_INTERVAL = 20 # ms
-GRAPH_UPDATE_INTERVAL = 400 #ms
+GRAPH_UPDATE_INTERVAL = 20 #ms
 
+mutex = QMutex()
+
+class Worker(QObject):
+
+    def __init__(self, port):
+        super().__init__()
+        self.ax_values = deque(maxlen=L)
+        self.ay_values = deque(maxlen=L)
+        self.az_values = deque(maxlen=L)
+
+        self.a_values = deque(maxlen=L) # before removing DC component - required for mean calculations.
+        self.a_ac_values = deque(maxlen=L)
+
+        self.rms_values = deque(maxlen=L)
+        self.std_dev_values = deque(maxlen=L)
+
+        # set-up LPF
+        sosx = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
+        sosy = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
+        sosz = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
+
+        self.LPFS = {'x': partial(sosfilt, sosx), 'y': partial(sosfilt, sosy), 'z': partial(sosfilt, sosz)}
+
+        # set up tag interface 
+        self.interface = TagInterface(port)
+        self.interface.reset()
+
+        self.px = self.py = self.qf = self.fall_px = self.fall_py = 0
+
+    def poll(self):
+        mutex.lock()
+
+        fall, px, self.py, self.qf, ax, ay, az = self.interface.read_data()
+
+        if fall:
+            logger.warning('Fall detected at position %d, %d', px, self.py)
+            fall_px, self.fall_py = self.px, self.py
+        
+        # Digital low pass filter values
+        f_ax = self.LPFS['x']([ax])[0]
+        f_ay = self.LPFS['y']([ay])[0]
+        f_az = self.LPFS['z']([az])[0]
+        self.ax_values.append(f_ax)
+        self.ay_values.append(f_ay)
+        self.az_values.append(f_az)
+
+        # Take magnitude of acceleration data
+        a_mag = math.sqrt(f_ax**2 + f_ay**2 + f_az**2)
+
+        # Remove DC component
+        self.a_values.append(a_mag)
+        try:
+            mean_val = fmean(self.a_values)
+            a_mag_ac = a_mag - mean_val
+        except StatisticsError:
+            # if we do not have any previous samples, then assume
+            # 0 AC value.
+            a_mag_ac = 0
+            mean_val = 0
+        
+        self.a_ac_values.append(a_mag_ac)
+
+        # Compute and plot rms and std_dev
+        a_ac_arr = np.array(self.a_ac_values)
+        a_ac_mean_val = np.mean(a_ac_arr)
+
+        rms = np.sqrt(1/len(self.a_ac_values) * np.sum(a_ac_arr**2))
+        std_dev = np.sqrt(1/len(self.a_ac_values) * np.sum((a_ac_arr - a_ac_mean_val)**2))
+
+        self.rms_values.append(rms)
+        self.std_dev_values.append(std_dev)
+
+        mutex.unlock()
+
+    def shutdown(self):
+        self.interface.shutdown()
+        
 class MainWindow(QWidget):
     def __init__(self, port):
 
@@ -72,21 +149,6 @@ class MainWindow(QWidget):
         self.layout.addLayout(v_layout)
         self.setLayout(self.layout)
 
-        '''
-        self.widget_3d = GLViewWidget()
-        self.widget_3d.setFixedSize(400, 400)
-        self.layout.addWidget(self.widget_3d)
-        #self.widget_3d.setBackgroundColor('w')
-
-        self.setLayout(self.layout)
-        self.axis_3d = GLAxisItem(glOptions='opaque')
-        self.widget_3d.addItem(self.axis_3d)
-        self.axis_3d.setSize(x=5,y=5,z=5)
-
-        self.scatter_3d = GLScatterPlotItem()
-        self.widget_3d.addItem(self.scatter_3d)
-        '''
-
         accel_layout = QVBoxLayout()
         self.layout.addLayout(accel_layout)
         self.acceleration_graph = PlotWidget()
@@ -105,13 +167,6 @@ class MainWindow(QWidget):
         self.a_ac_plot = self.acceleration_ac_graph.plot([], [])
         self.a_ac_plot.setFftMode(False)
 
-        self.ax_values = deque(maxlen=L)
-        self.ay_values = deque(maxlen=L)
-        self.az_values = deque(maxlen=L)
-
-        self.a_values = deque(maxlen=L) # before removing DC component - required for mean calculations.
-        self.a_ac_values = deque(maxlen=L)
-
         self.rms_graph = PlotWidget()
         self.rms_graph.setBackground('w')
         self.std_dev_graph = PlotWidget()
@@ -126,100 +181,60 @@ class MainWindow(QWidget):
         self.rms_plot = self.rms_graph.plot([], [])
         self.std_dev_plot = self.std_dev_graph.plot([], [])
 
-        self.rms_values = deque(maxlen=L)
-        self.std_dev_values = deque(maxlen=L)
-
-        # set-up LPF
-        sosx = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
-        sosy = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
-        sosz = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
-
-        self.LPFS = {'x': partial(sosfilt, sosx), 'y': partial(sosfilt, sosy), 'z': partial(sosfilt, sosz)}
-
-        # set up tag interface 
-        self.interface = TagInterface(port)
-        self.interface.reset()
-
-        # setup update timer
+        # setup timers and worker
+        self.worker = Worker(port)
+        self.thread = QThread()
         self.poll_timer = QTimer()
+
+        self.worker.moveToThread(self.thread)
+        self.poll_timer.moveToThread(self.thread)
+
         self.poll_timer.setInterval(TAG_POLL_INTERVAL)
-        self.poll_timer.timeout.connect(self.poll)
+        self.poll_timer.timeout.connect(self.worker.poll)
+        self.thread.started.connect(self.poll_timer.start)
+        self.thread.started.connect(self.poll_timer.start)
+        self.thread.finished.connect(self.poll_timer.stop)
+        self.thread.finished.connect(self.worker.shutdown)
 
         self.update_timer = QTimer()
         self.update_timer.setInterval(GRAPH_UPDATE_INTERVAL)
         self.update_timer.timeout.connect(self.update_gui)
 
-
-        self.px = self.py = self.qf = self.fall_px = self.fall_py = 0
-
         logger.info('App configured, starting..')
-        self.poll_timer.start()
+        self.thread.start()
         self.update_timer.start()
 
+    def closeEvent(self, event):
+        self.thread.exit()
+
+        event.accept() # close
+
     def update_gui(self):
-        pass
+        mutex.lock()
+
         # Update tag position plot
-        self.tag_plot.setData([self.px], [self.py])
+        self.tag_plot.setData([self.worker.px], [self.worker.py])
         
         # update quality indicator
-        self.quality_slider.setValue(self.qf)
-        self.quality_label.setText(str(self.qf))
+        self.quality_slider.setValue(self.worker.qf)
+        self.quality_label.setText(str(self.worker.qf))
 
         # Update fall marker
-        self.fall_plot.setData([self.fall_px], [self.fall_py])
+        self.fall_plot.setData([self.worker.fall_px], [self.worker.fall_py])
 
         # update filtered acceleration plots: ax ay az
-        self.ax_plot.setData(range(len(self.ax_values)), self.ax_values)
-        self.ay_plot.setData(range(len(self.ay_values)), self.ay_values)
-        self.az_plot.setData(range(len(self.az_values)), self.az_values)
+        self.ax_plot.setData(range(len(self.worker.ax_values)), self.worker.ax_values)
+        self.ay_plot.setData(range(len(self.worker.ay_values)), self.worker.ay_values)
+        self.az_plot.setData(range(len(self.worker.az_values)), self.worker.az_values)
 
         # Update acceleration AC magnitude plot
-        self.a_ac_plot.setData(range(len(self.a_ac_values)), self.a_ac_values)
+        self.a_ac_plot.setData(range(len(self.worker.a_ac_values)), self.worker.a_ac_values)
 
         # Update rms and std_dev plots
-        self.rms_plot.setData(range(len(self.rms_values)), self.rms_values)
-        self.std_dev_plot.setData(range(len(self.std_dev_values)), self.std_dev_values)
+        self.rms_plot.setData(range(len(self.worker.rms_values)), self.worker.rms_values)
+        self.std_dev_plot.setData(range(len(self.worker.std_dev_values)), self.worker.std_dev_values)
 
-    def poll(self):
-        fall, self.px, self.py, self.qf, ax, ay, az = self.interface.read_data()
-
-        if fall:
-            logger.warning('Fall detected at position %d, %d', self.px, self.py)
-            self.fall_px, self.fall_py = self.px, self.py
-        
-        # Digital low pass filter values
-        f_ax = self.LPFS['x']([ax])[0]
-        f_ay = self.LPFS['y']([ay])[0]
-        f_az = self.LPFS['z']([az])[0]
-        self.ax_values.append(f_ax)
-        self.ay_values.append(f_ay)
-        self.az_values.append(f_az)
-
-        # Take magnitude of acceleration data
-        a_mag = math.sqrt(f_ax**2 + f_ay**2 + f_az**2)
-
-        # Remove DC component
-        self.a_values.append(a_mag)
-        try:
-            mean_val = fmean(self.a_values)
-            a_mag_ac = a_mag - mean_val
-        except StatisticsError:
-            # if we do not have any previous samples, then assume
-            # 0 AC value.
-            a_mag_ac = 0
-            mean_val = 0
-        
-        self.a_ac_values.append(a_mag_ac)
-
-        # Compute and plot rms and std_dev
-        a_ac_arr = np.array(self.a_ac_values)
-        a_ac_mean_val = np.mean(a_ac_arr)
-
-        rms = np.sqrt(1/len(self.a_ac_values) * np.sum(a_ac_arr**2))
-        std_dev = np.sqrt(1/len(self.a_ac_values) * np.sum((a_ac_arr - a_ac_mean_val)**2))
-
-        self.rms_values.append(rms)
-        self.std_dev_values.append(std_dev)
+        mutex.unlock()
 
 if __name__ == '__main__':
     app = QApplication([])
