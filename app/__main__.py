@@ -15,23 +15,24 @@ from pyqtgraph.opengl import GLViewWidget, GLAxisItem, GLScatterPlotItem, GLGrid
 import sys
 import numpy as np
 import math
-from scipy.signal import butter, lfilter
+from scipy.signal import butter, sosfilt
 from functools import partial
 from collections import deque
-from statistics import mean, StatisticsError
+from statistics import fmean, StatisticsError
 
 from anchors import ANCHOR_X, ANCHOR_Y
 from tag_serial_interface import TagInterface
 
 logger = logging.getLogger(__name__)
 ACC_SAMPLE_RATE = 50 # Hz
-LPF_CUTOFF = 15 #Hz
+LPF_CUTOFF_HIGH = 15 #Hz
+LPF_CUTOFF_LOW = 0.1 #Hz
 NYQ_FREQ = 0.5*ACC_SAMPLE_RATE
-LPF_ORDER = 10
+LPF_ORDER = 12
 
 L = 400 #window size for rolling calculations
 TAG_POLL_INTERVAL = 20 # ms
-GRAPH_UPDATE_INTERVAL = 100 #ms
+GRAPH_UPDATE_INTERVAL = 400 #ms
 
 class MainWindow(QWidget):
     def __init__(self, port):
@@ -108,31 +109,32 @@ class MainWindow(QWidget):
         self.ay_values = deque(maxlen=L)
         self.az_values = deque(maxlen=L)
 
+        self.a_values = deque(maxlen=L) # before removing DC component - required for mean calculations.
         self.a_ac_values = deque(maxlen=L)
 
-        self.energy_graph = PlotWidget()
-        self.energy_graph.setBackground('w')
-        self.cv_graph = PlotWidget()
-        self.cv_graph.setBackground('w')
+        self.rms_graph = PlotWidget()
+        self.rms_graph.setBackground('w')
+        self.std_dev_graph = PlotWidget()
+        self.std_dev_graph.setBackground('w')
 
-        accel_layout.addWidget(self.energy_graph)
-        accel_layout.addWidget(self.cv_graph)
+        accel_layout.addWidget(self.rms_graph)
+        accel_layout.addWidget(self.std_dev_graph)
 
-        self.energy_graph.setXRange(0, L)
-        self.cv_graph.setXRange(0, L)
+        self.rms_graph.setXRange(0, L)
+        self.std_dev_graph.setXRange(0, L)
 
-        self.energy_plot = self.energy_graph.plot([], [])
-        self.cv_plot = self.cv_graph.plot([], [])
+        self.rms_plot = self.rms_graph.plot([], [])
+        self.std_dev_plot = self.std_dev_graph.plot([], [])
 
-        self.energy_values = deque(maxlen=L)
-        self.cv_values = deque(maxlen=L)
+        self.rms_values = deque(maxlen=L)
+        self.std_dev_values = deque(maxlen=L)
 
         # set-up LPF
-        bx, ax = butter(LPF_ORDER, LPF_CUTOFF/NYQ_FREQ, btype='low')
-        by, ay = butter(LPF_ORDER, LPF_CUTOFF/NYQ_FREQ, btype='low')
-        bz, az = butter(LPF_ORDER, LPF_CUTOFF/NYQ_FREQ, btype='low')
+        sosx = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
+        sosy = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
+        sosz = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
 
-        self.LPFS = {'x': partial(lfilter, bx, ax), 'y': partial(lfilter, by, ay), 'z': partial(lfilter, bz, az)}
+        self.LPFS = {'x': partial(sosfilt, sosx), 'y': partial(sosfilt, sosy), 'z': partial(sosfilt, sosz)}
 
         # set up tag interface 
         self.interface = TagInterface(port)
@@ -174,9 +176,9 @@ class MainWindow(QWidget):
         # Update acceleration AC magnitude plot
         self.a_ac_plot.setData(range(len(self.a_ac_values)), self.a_ac_values)
 
-        # Update energy and cv plots
-        self.energy_plot.setData(range(len(self.energy_values)), self.energy_values)
-        self.cv_plot.setData(range(len(self.cv_values)), self.cv_values)
+        # Update rms and std_dev plots
+        self.rms_plot.setData(range(len(self.rms_values)), self.rms_values)
+        self.std_dev_plot.setData(range(len(self.std_dev_values)), self.std_dev_values)
 
     def poll(self):
         fall, self.px, self.py, self.qf, ax, ay, az = self.interface.read_data()
@@ -186,7 +188,9 @@ class MainWindow(QWidget):
             self.fall_px, self.fall_py = self.px, self.py
         
         # Digital low pass filter values
-        f_ax, f_ay, f_az = *self.LPFS['x']([ax]), *self.LPFS['y']([ay]), *self.LPFS['z']([az])
+        f_ax = self.LPFS['x']([ax])[0]
+        f_ay = self.LPFS['y']([ay])[0]
+        f_az = self.LPFS['z']([az])[0]
         self.ax_values.append(f_ax)
         self.ay_values.append(f_ay)
         self.az_values.append(f_az)
@@ -195,26 +199,27 @@ class MainWindow(QWidget):
         a_mag = math.sqrt(f_ax**2 + f_ay**2 + f_az**2)
 
         # Remove DC component
+        self.a_values.append(a_mag)
         try:
-            mean_val = mean(self.a_ac_values)
+            mean_val = fmean(self.a_values)
             a_mag_ac = a_mag - mean_val
         except StatisticsError:
-            #FIXME: is there a better way
             # if we do not have any previous samples, then assume
             # 0 AC value.
             a_mag_ac = 0
             mean_val = 0
-
+        
         self.a_ac_values.append(a_mag_ac)
 
-        # Compute and plot energy and cv
+        # Compute and plot rms and std_dev
         a_ac_arr = np.array(self.a_ac_values)
-        energy = np.sqrt(1/len(self.a_ac_values) * np.sum(a_ac_arr**2))
-        cv = np.sqrt(1/len(self.a_ac_values) * np.sum((a_ac_arr - mean_val)**2))/mean_val
-        #logger.debug('Energy: %f. cv: %f', energy, cv)
+        a_ac_mean_val = np.mean(a_ac_arr)
 
-        self.energy_values.append(energy)
-        self.cv_values.append(cv)
+        rms = np.sqrt(1/len(self.a_ac_values) * np.sum(a_ac_arr**2))
+        std_dev = np.sqrt(1/len(self.a_ac_values) * np.sum((a_ac_arr - a_ac_mean_val)**2))
+
+        self.rms_values.append(rms)
+        self.std_dev_values.append(std_dev)
 
 if __name__ == '__main__':
     app = QApplication([])
