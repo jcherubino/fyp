@@ -84,16 +84,28 @@ class Worker(QObject):
 
         self.motion_status = MotionStatus.STATIONARY
 
+        self.rolling_x = []
+        self.rolling_y = []
+
         self.fft = self.fft_freq = None
 
     def poll(self):
         mutex.lock()
 
         try:
-            fall, px, self.py, self.qf, ax, ay, az = self.interface.read_data()
+            fall, self.px, self.py, self.qf, ax, ay, az = self.interface.read_data()
         except ValueError:
             mutex.unlock()
             return
+
+        # if stationary we take rolling average so store pos values
+        if self.motion_status = MotionStatus.STATIONARY:
+            self.rolling_x.append(self.px)
+            self.rolling_y.append(self.py)
+        else:
+            # otherwise clear the values
+            self.rolling_x = []
+            self.rolling_y = []
 
         if fall:
             logger.warning('Fall detected at position %d, %d', px, self.py)
@@ -199,6 +211,9 @@ class MainWindow(QWidget):
         self.fall_plot = self.plot_widget.plot([], [], pen=None, symbol='x', symbolBrush='r')
         self.tag_plot = self.plot_widget.plot([], [], pen=None, symbol='o',
                 symbolBrush='g')
+
+        self.rolling_tag_plot = self.plot_widget.plot([], [], pen=None, symbol='o',
+                symbolBrush='o')
 
         self.plot_widget.setXRange(min(ANCHOR_X), max(ANCHOR_X))
         self.plot_widget.setYRange(min(ANCHOR_Y), max(ANCHOR_Y))
@@ -307,7 +322,12 @@ class MainWindow(QWidget):
 
         # Update tag position plot
         self.tag_plot.setData([self.worker.px], [self.worker.py])
-        
+        if self.worker.motion_status = MotionStatus.STATIONARY:
+            self.rolling_tag_plot.setData([np.mean(self.worker.rolling_x], 
+                [np.mean(self.worker.rolling_y)])
+        else:
+            self.rolling_tag_plot.setData([], [])
+
         # update quality indicator
         self.quality_slider.setValue(self.worker.qf)
         self.quality_label.setText(str(self.worker.qf))
