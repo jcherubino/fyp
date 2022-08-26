@@ -32,7 +32,7 @@ LPF_ORDER = 12
 
 L = 400 #window size for rolling calculations
 TAG_POLL_INTERVAL = 20 # ms
-GRAPH_UPDATE_INTERVAL = 20 #ms
+GRAPH_UPDATE_INTERVAL = 100 #ms
 
 mutex = QMutex()
 
@@ -48,7 +48,6 @@ class Worker(QObject):
         self.a_ac_values = deque(maxlen=L)
 
         self.rms_values = deque(maxlen=L)
-        self.std_dev_values = deque(maxlen=L)
 
         # set-up LPF
         sosx = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
@@ -100,15 +99,16 @@ class Worker(QObject):
         
         self.a_ac_values.append(a_mag_ac)
 
-        # Compute and plot rms and std_dev
+        # Compute rms and fft
         a_ac_arr = np.array(self.a_ac_values)
         a_ac_mean_val = np.mean(a_ac_arr)
 
         rms = np.sqrt(1/len(self.a_ac_values) * np.sum(a_ac_arr**2))
-        std_dev = np.sqrt(1/len(self.a_ac_values) * np.sum((a_ac_arr - a_ac_mean_val)**2))
+        fft = np.fft.rfft(a_ac_arr)
 
         self.rms_values.append(rms)
-        self.std_dev_values.append(std_dev)
+
+        # TODO: Do processing with rms and fft values.
 
         mutex.unlock()
 
@@ -169,21 +169,20 @@ class MainWindow(QWidget):
         self.acceleration_ac_graph.setXRange(0, L)
 
         self.a_ac_plot = self.acceleration_ac_graph.plot([], [])
-        self.a_ac_plot.setFftMode(False)
 
         self.rms_graph = PlotWidget()
         self.rms_graph.setBackground('w')
-        self.std_dev_graph = PlotWidget()
-        self.std_dev_graph.setBackground('w')
+        self.fft_graph = PlotWidget()
+        self.fft_graph.setBackground('w')
 
         accel_layout.addWidget(self.rms_graph)
-        accel_layout.addWidget(self.std_dev_graph)
+        accel_layout.addWidget(self.fft_graph)
 
         self.rms_graph.setXRange(0, L)
-        self.std_dev_graph.setXRange(0, L)
 
         self.rms_plot = self.rms_graph.plot([], [])
-        self.std_dev_plot = self.std_dev_graph.plot([], [])
+        self.fft_plot = self.fft_graph.plot([], [])
+        self.fft_plot.setFftMode(True)
 
         # setup timers and worker
         self.worker = Worker(port)
@@ -234,9 +233,9 @@ class MainWindow(QWidget):
         # Update acceleration AC magnitude plot
         self.a_ac_plot.setData(range(len(self.worker.a_ac_values)), self.worker.a_ac_values)
 
-        # Update rms and std_dev plots
+        # Update rms and fft plots
         self.rms_plot.setData(range(len(self.worker.rms_values)), self.worker.rms_values)
-        self.std_dev_plot.setData(range(len(self.worker.std_dev_values)), self.worker.std_dev_values)
+        self.fft_plot.setData(range(len(self.worker.a_ac_values)), self.worker.a_ac_values)
 
         mutex.unlock()
 
