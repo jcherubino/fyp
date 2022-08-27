@@ -80,7 +80,8 @@ class Worker(QObject):
         self.interface = TagInterface(port)
         self.interface.reset()
 
-        self.px = self.py = self.qf = self.fall_px = self.fall_py = 0
+        self.px = self.py = self.qf = 0
+        self.fall_px = self.fall_py = None
 
         self.motion_status = MotionStatus.STATIONARY
 
@@ -99,7 +100,7 @@ class Worker(QObject):
             return
 
         # if stationary we take rolling average so store pos values
-        if self.motion_status = MotionStatus.STATIONARY:
+        if self.motion_status == MotionStatus.STATIONARY:
             self.rolling_x.append(self.px)
             self.rolling_y.append(self.py)
         else:
@@ -108,7 +109,7 @@ class Worker(QObject):
             self.rolling_y = []
 
         if fall:
-            logger.warning('Fall detected at position %d, %d', px, self.py)
+            logger.warning('Fall detected at position %d, %d', self.px, self.py)
             self.fall_px, self.fall_py = self.px, self.py
         
         # Digital low pass filter values
@@ -213,7 +214,7 @@ class MainWindow(QWidget):
                 symbolBrush='g')
 
         self.rolling_tag_plot = self.plot_widget.plot([], [], pen=None, symbol='o',
-                symbolBrush='o')
+                symbolBrush='k')
 
         self.plot_widget.setXRange(min(ANCHOR_X), max(ANCHOR_X))
         self.plot_widget.setYRange(min(ANCHOR_Y), max(ANCHOR_Y))
@@ -322,8 +323,8 @@ class MainWindow(QWidget):
 
         # Update tag position plot
         self.tag_plot.setData([self.worker.px], [self.worker.py])
-        if self.worker.motion_status = MotionStatus.STATIONARY:
-            self.rolling_tag_plot.setData([np.mean(self.worker.rolling_x], 
+        if self.worker.motion_status == MotionStatus.STATIONARY:
+            self.rolling_tag_plot.setData([np.mean(self.worker.rolling_x)], 
                 [np.mean(self.worker.rolling_y)])
         else:
             self.rolling_tag_plot.setData([], [])
@@ -333,7 +334,8 @@ class MainWindow(QWidget):
         self.quality_label.setText(str(self.worker.qf))
 
         # Update fall marker
-        self.fall_plot.setData([self.worker.fall_px], [self.worker.fall_py])
+        if self.worker.fall_px is not None:
+            self.fall_plot.setData([self.worker.fall_px], [self.worker.fall_py])
 
         # update filtered acceleration plots: ax ay az
         self.ax_plot.setData(range(len(self.worker.ax_values)), self.worker.ax_values)
