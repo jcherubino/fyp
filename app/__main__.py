@@ -10,8 +10,7 @@ logging.config.dictConfig(LOG_DICT_CONFIG)
 
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QSlider, QLabel, QHBoxLayout
 from PyQt5.QtCore import QTimer, Qt, QObject, QMutex, QThread, pyqtSignal
-from pyqtgraph import PlotWidget, mkPen
-from pyqtgraph.opengl import GLViewWidget, GLAxisItem, GLScatterPlotItem, GLGridItem
+from pyqtgraph import PlotWidget, mkPen, ArrowItem
 import sys
 import numpy as np
 import math
@@ -88,6 +87,11 @@ class Worker(QObject):
         self.rolling_x = []
         self.rolling_y = []
 
+        self.prev_x = deque(maxlen=5)
+        self.prev_y = deque(maxlen=5)
+
+        self.movement_direction = None
+
         self.fft = self.fft_freq = None
 
     def poll(self):
@@ -112,6 +116,21 @@ class Worker(QObject):
             logger.warning('Fall detected at position %d, %d', self.px, self.py)
             self.fall_px, self.fall_py = self.px, self.py
         
+        # infer direction of motion from subsequent samples
+        if self.motion_status != MotionStatus.STATIONARY:
+            try:
+                delta_x = self.prev_x[0] - self.px
+                delta_y = self.prev_y[0] - self.py
+                self.movement_direction = np.degrees(np.arctan2(delta_y, delta_x))
+                #logger.debug("Movement direction: %f", self.movement_direction)
+            except TypeError:
+                # if we don't have previous position sample
+                # then we cannot infer angle
+                logger.debug("Missing previous samples, no movement direction set")
+                self.movement_direction = None
+        else:
+            self.movement_direction = None
+
         # Digital low pass filter values
         f_ax = self.LPFS['x']([ax])[0]
         f_ay = self.LPFS['y']([ay])[0]
@@ -141,6 +160,9 @@ class Worker(QObject):
 
         rms = np.sqrt(1/len(self.a_ac_values) * np.sum(a_ac_arr**2))
         self.rms_values.append(rms)
+
+        self.prev_x.append(self.px)
+        self.prev_y.append(self.py)
 
         mutex.unlock()
 
@@ -215,6 +237,11 @@ class MainWindow(QWidget):
 
         self.rolling_tag_plot = self.plot_widget.plot([], [], pen=None, symbol='o',
                 symbolBrush='k')
+
+        self.movement_direction_arrow = ArrowItem(tailLen=20, brush='y')
+        self.plot_widget.addItem(self.movement_direction_arrow)
+        # initially hidden
+        self.movement_direction_arrow.setVisible(False)
 
         self.plot_widget.setXRange(min(ANCHOR_X), max(ANCHOR_X))
         self.plot_widget.setYRange(min(ANCHOR_Y), max(ANCHOR_Y))
@@ -328,6 +355,14 @@ class MainWindow(QWidget):
                 [np.mean(self.worker.rolling_y)])
         else:
             self.rolling_tag_plot.setData([], [])
+
+        if self.worker.movement_direction is not None:
+            # add 180 to account for offset (0 degrees points left)
+            self.movement_direction_arrow.setStyle(angle=180+(np.sign(self.worker.movement_direction)*(180 - abs(self.worker.movement_direction))))
+            self.movement_direction_arrow.setPos(self.worker.px, self.worker.py)
+            self.movement_direction_arrow.setVisible(True)
+        else:
+            self.movement_direction_arrow.setVisible(False)
 
         # update quality indicator
         self.quality_slider.setValue(self.worker.qf)
