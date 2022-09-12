@@ -32,7 +32,7 @@ LPF_ORDER = 12
 
 L = 100 #window size for rolling calculations
 
-RMS_THRESHOLD = 7
+RMS_THRESHOLD = 4
 FFT_THRESHOLD = 1
 FFT_RELATIVE_PEAK_PERCENT = 20 # %
 
@@ -94,6 +94,14 @@ class Worker(QObject):
 
         self.fft = self.fft_freq = None
 
+        self.fft_peak_frequency = None
+
+        self.a = 0.005
+        self.b = 0
+        self.L = 1.00*1000 # metre in mm
+
+        self.step_length = None
+
     def poll(self):
         mutex.lock()
 
@@ -117,19 +125,25 @@ class Worker(QObject):
             self.fall_px, self.fall_py = self.px, self.py
         
         # infer direction of motion from subsequent samples
-        if self.motion_status != MotionStatus.STATIONARY:
+        if self.motion_status == MotionStatus.WALKING:
             try:
                 delta_x = self.prev_x[0] - self.px
                 delta_y = self.prev_y[0] - self.py
                 self.movement_direction = np.degrees(np.arctan2(delta_y, delta_x))
+                self.movement_direction = -np.sign(self.movement_direction)*(180 - abs(self.movement_direction))
                 #logger.debug("Movement direction: %f", self.movement_direction)
             except TypeError:
                 # if we don't have previous position sample
                 # then we cannot infer angle
                 logger.debug("Missing previous samples, no movement direction set")
                 self.movement_direction = None
+            # then infer next position using estimated step length and direction
+            if self.step_length is not None:
+                self.predicted_x = self.prev_x[-1] + np.cos(np.radians(self.movement_direction)) * self.step_length
+                self.predicted_y = self.prev_y[-1] + np.sin(np.radians(self.movement_direction)) * self.step_length
         else:
             self.movement_direction = None
+            self.predicted_x = self.predicted_y = None
 
         # Digital low pass filter values
         f_ax = self.LPFS['x']([ax])[0]
@@ -173,7 +187,7 @@ class Worker(QObject):
         a_ac_mean_val = np.mean(a_ac_arr)
 
         self.fft = np.abs(np.fft.rfft(a_ac_arr) / a_ac_arr.size)
-        self.fft_freq = np.fft.rfftfreq(a_ac_arr.shape[-1])
+        self.fft_freq = ACC_SAMPLE_RATE * np.fft.rfftfreq(a_ac_arr.shape[-1])
 
         #Infer motion status
         self.rms_mean = np.mean(self.rms_values)
@@ -197,6 +211,9 @@ class Worker(QObject):
                 if diff > (top_mag/100 * FFT_RELATIVE_PEAK_PERCENT):
                     logger.info('Walking motion detected')
                     self.motion_status = MotionStatus.WALKING
+                    # save peak for step length estimation
+                    self.fft_peak_frequency = self.fft_freq[sorted_idx[0]]
+                    logger.debug("FFT peak frequency: %f", self.fft_peak_frequency)
                 else:
                     logger.info('Relative difference of FFT peaks insufficent. Expected %f, got %f', top_mag/100*FFT_RELATIVE_PEAK_PERCENT, diff)
                     self.motion_status = MotionStatus.ERRATIC
@@ -213,6 +230,13 @@ class Worker(QObject):
                 logger.info('Motion deemed stationary')
                 self.motion_status = MotionStatus.STATIONARY
         
+        if self.motion_status == MotionStatus.WALKING:
+            # Use linear motion model to compute step length
+            self.step_length = self.a * self.L * self.fft_peak_frequency + self.b
+            logger.info("Predicted step length: %f", self.step_length)
+        else:
+            self.step_length = None
+
         self.motion_analysed.emit()
         mutex.unlock()
 
@@ -237,7 +261,8 @@ class MainWindow(QWidget):
 
         self.rolling_tag_plot = self.plot_widget.plot([], [], pen=None, symbol='o',
                 symbolBrush='k')
-
+        
+        self.predicted_position_plot = self.plot_widget.plot([], [], pen=None, symbol='o', symbolBrush='r')
         self.movement_direction_arrow = ArrowItem(tailLen=20, brush='y')
         self.plot_widget.addItem(self.movement_direction_arrow)
         # initially hidden
@@ -358,11 +383,17 @@ class MainWindow(QWidget):
 
         if self.worker.movement_direction is not None:
             # add 180 to account for offset (0 degrees points left)
-            self.movement_direction_arrow.setStyle(angle=180+(np.sign(self.worker.movement_direction)*(180 - abs(self.worker.movement_direction))))
+            self.movement_direction_arrow.setStyle(angle=180-self.worker.movement_direction)
             self.movement_direction_arrow.setPos(self.worker.px, self.worker.py)
             self.movement_direction_arrow.setVisible(True)
         else:
             self.movement_direction_arrow.setVisible(False)
+        
+        # show predicted position for sample
+        if self.worker.predicted_x is not None:
+            self.predicted_position_plot.setData([self.worker.predicted_x], [self.worker.predicted_y])
+        else:
+            self.predicted_position_plot.setData([], [])
 
         # update quality indicator
         self.quality_slider.setValue(self.worker.qf)
