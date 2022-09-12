@@ -39,6 +39,8 @@ FFT_RELATIVE_PEAK_PERCENT = 20 # %
 TAG_POLL_INTERVAL = 20 # ms
 GRAPH_UPDATE_INTERVAL = 140 #ms
 
+MEASURE_CONFIDENCE = 0.4
+
 mutex = QMutex()
 
 class MotionStatus(enum.Enum):
@@ -96,21 +98,29 @@ class Worker(QObject):
 
         self.fft_peak_frequency = None
 
-        self.a = 0.005
+        self.a = 0.01
         self.b = 0
         self.L = 1.00*1000 # metre in mm
 
         self.step_length = None
+        self.predicted_x = self.predicted_y = None
 
     def poll(self):
         mutex.lock()
 
         try:
-            fall, self.px, self.py, self.qf, ax, ay, az = self.interface.read_data()
+            fall, measured_x, measured_y, self.qf, ax, ay, az = self.interface.read_data()
         except ValueError:
             mutex.unlock()
             return
 
+        # combine measured x and y with predicted x and y for next sample
+        if self.predicted_x is not None:
+            self.px = MEASURE_CONFIDENCE*measured_x + (1-MEASURE_CONFIDENCE)*self.predicted_x
+            self.py = MEASURE_CONFIDENCE*measured_y + (1-MEASURE_CONFIDENCE)*self.predicted_y
+        else:
+            self.px = measured_x
+            self.py = measured_y
         # if stationary we take rolling average so store pos values
         if self.motion_status == MotionStatus.STATIONARY:
             self.rolling_x.append(self.px)
