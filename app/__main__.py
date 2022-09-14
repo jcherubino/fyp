@@ -24,6 +24,9 @@ from anchors import ANCHOR_X, ANCHOR_Y
 from tag_serial_interface import TagInterface
 
 logger = logging.getLogger(__name__)
+pos_logger = logging.getLogger('pos_logger')
+accel_logger = logging.getLogger('accel_logger')
+
 ACC_SAMPLE_RATE = 50 # Hz
 LPF_CUTOFF_HIGH = 15 #Hz
 LPF_CUTOFF_LOW = 0.1 #Hz
@@ -105,22 +108,28 @@ class Worker(QObject):
         self.step_length = None
         self.predicted_x = self.predicted_y = None
 
+
     def poll(self):
         mutex.lock()
 
         try:
             fall, measured_x, measured_y, self.qf, ax, ay, az = self.interface.read_data()
+            accel_logger.info('%.2f,%.2f,%.2f',ax,ay,az)
         except ValueError:
             mutex.unlock()
             return
 
-        # combine measured x and y with predicted x and y for next sample
-        if self.predicted_x is not None:
+        if self.motion_status == MotionStatus.WALKING and self.predicted_x is not None:
             self.px = MEASURE_CONFIDENCE*measured_x + (1-MEASURE_CONFIDENCE)*self.predicted_x
             self.py = MEASURE_CONFIDENCE*measured_y + (1-MEASURE_CONFIDENCE)*self.predicted_y
         else:
             self.px = measured_x
             self.py = measured_y
+        if self.predicted_x is not None:
+            pos_logger.info('%.2f,%.2f%.2f,%.2f,%s', measured_x, measured_y, self.predicted_x, self.predicted_y, self.motion_status.name)
+        else:
+            pos_logger.info('%.2f,%.2f%.2f,%.2f,%s', measured_x, measured_y, float('nan'), float('nan'), self.motion_status.name)
+
         # if stationary we take rolling average so store pos values
         if self.motion_status == MotionStatus.STATIONARY:
             self.rolling_x.append(self.px)
@@ -135,24 +144,21 @@ class Worker(QObject):
             self.fall_px, self.fall_py = self.px, self.py
         
         # infer direction of motion from subsequent samples
-        if self.motion_status == MotionStatus.WALKING:
-            try:
-                delta_x = self.prev_x[0] - self.px
-                delta_y = self.prev_y[0] - self.py
-                self.movement_direction = np.degrees(np.arctan2(delta_y, delta_x))
-                self.movement_direction = -np.sign(self.movement_direction)*(180 - abs(self.movement_direction))
-                #logger.debug("Movement direction: %f", self.movement_direction)
-            except TypeError:
-                # if we don't have previous position sample
-                # then we cannot infer angle
-                logger.debug("Missing previous samples, no movement direction set")
-                self.movement_direction = None
-            # then infer next position using estimated step length and direction
-            if self.step_length is not None:
-                self.predicted_x = self.prev_x[-1] + np.cos(np.radians(self.movement_direction)) * self.step_length
-                self.predicted_y = self.prev_y[-1] + np.sin(np.radians(self.movement_direction)) * self.step_length
-        else:
+        try:
+            delta_x = self.prev_x[0] - self.px
+            delta_y = self.prev_y[0] - self.py
+            self.movement_direction = np.degrees(np.arctan2(delta_y, delta_x))
+            self.movement_direction = -np.sign(self.movement_direction)*(180 - abs(self.movement_direction))
+        except TypeError:
+            # if we don't have previous position sample
+            # then we cannot infer angle
+            logger.debug("Missing previous samples, no movement direction set")
             self.movement_direction = None
+        # then infer next position using estimated step length and direction
+        if self.step_length is not None and self.movement_direction is not None:
+            self.predicted_x = self.prev_x[-1] + np.cos(np.radians(self.movement_direction)) * self.step_length
+            self.predicted_y = self.prev_y[-1] + np.sin(np.radians(self.movement_direction)) * self.step_length
+        else:
             self.predicted_x = self.predicted_y = None
 
         # Digital low pass filter values
@@ -201,6 +207,9 @@ class Worker(QObject):
 
         #Infer motion status
         self.rms_mean = np.mean(self.rms_values)
+        
+        # store initial peak frequency
+        self.fft_peak_frequency = self.fft_freq[np.argmax(self.fft.real)]
 
         if self.rms_mean > RMS_THRESHOLD:
             # Take fft data. Find top 2 peaks. 
@@ -240,12 +249,9 @@ class Worker(QObject):
                 logger.info('Motion deemed stationary')
                 self.motion_status = MotionStatus.STATIONARY
         
-        if self.motion_status == MotionStatus.WALKING:
-            # Use linear motion model to compute step length
-            self.step_length = self.a * self.L * self.fft_peak_frequency + self.b
-            logger.info("Predicted step length: %f", self.step_length)
-        else:
-            self.step_length = None
+        # Use linear motion model to compute step length
+        self.step_length = self.a * self.L * self.fft_peak_frequency + self.b
+        logger.info("Predicted step length: %f", self.step_length)
 
         self.motion_analysed.emit()
         mutex.unlock()
@@ -391,7 +397,7 @@ class MainWindow(QWidget):
         else:
             self.rolling_tag_plot.setData([], [])
 
-        if self.worker.movement_direction is not None:
+        if self.worker.motion_status == MotionStatus.WALKING:
             # add 180 to account for offset (0 degrees points left)
             self.movement_direction_arrow.setStyle(angle=180-self.worker.movement_direction)
             self.movement_direction_arrow.setPos(self.worker.px, self.worker.py)

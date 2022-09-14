@@ -6,6 +6,10 @@ LOG_DICT_CONFIG = {
         'standard': {
             'format': '[%(levelname)s] %(asctime)s %(name)s: %(message)s'
             },
+        'data_logging': {
+            'format': '%(asctime)s.%(msecs)03d,%(name)s,%(message)s'
+            'datefmt': '%H:%M:%S',
+            },
         },
     'handlers': {
         'default': {
@@ -20,11 +24,33 @@ LOG_DICT_CONFIG = {
             'formatter': 'standard',
             'maxBytes': 2**20,
             'backupCount': 3,
-            }
+            },
+        'acceleration_handler': {
+            'level': 'DEBUG',
+            'filename': 'acceleration.log',
+            'class': 'logging.handlers.FileHandler',
+            'formatter': 'data_logging',
+            'mode': 'a',
+            },
+        'position_handler': {
+            'level': 'DEBUG',
+            'filename': 'position.log',
+            'class': 'logging.handlers.FileHandler',
+            'formatter': 'data_logging',
+            'mode': 'a',
+            },
         },
     'loggers': {
         '': {
             'handlers': ['default', 'file_handler'],
+            'level': 'DEBUG',
+        },
+        'accel_logger': {
+            'handlers': ['acceleration_handler'],
+            'level': 'DEBUG',
+        },
+        'pos_logger': {
+            'handlers': ['position_handler'],
             'level': 'DEBUG',
         },
     }
