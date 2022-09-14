@@ -114,7 +114,6 @@ class Worker(QObject):
 
         try:
             fall, measured_x, measured_y, self.qf, ax, ay, az = self.interface.read_data()
-            accel_logger.info('%.2f,%.2f,%.2f',ax,ay,az)
         except ValueError:
             mutex.unlock()
             return
@@ -126,9 +125,9 @@ class Worker(QObject):
             self.px = measured_x
             self.py = measured_y
         if self.predicted_x is not None:
-            pos_logger.info('%.2f,%.2f%.2f,%.2f,%s', measured_x, measured_y, self.predicted_x, self.predicted_y, self.motion_status.name)
+            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, self.predicted_x, self.predicted_y, self.motion_status.name)
         else:
-            pos_logger.info('%.2f,%.2f%.2f,%.2f,%s', measured_x, measured_y, float('nan'), float('nan'), self.motion_status.name)
+            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, float('nan'), float('nan'), self.motion_status.name)
 
         # if stationary we take rolling average so store pos values
         if self.motion_status == MotionStatus.STATIONARY:
@@ -149,7 +148,7 @@ class Worker(QObject):
             delta_y = self.prev_y[0] - self.py
             self.movement_direction = np.degrees(np.arctan2(delta_y, delta_x))
             self.movement_direction = -np.sign(self.movement_direction)*(180 - abs(self.movement_direction))
-        except TypeError:
+        except:
             # if we don't have previous position sample
             # then we cannot infer angle
             logger.debug("Missing previous samples, no movement direction set")
@@ -168,6 +167,7 @@ class Worker(QObject):
         self.ax_values.append(f_ax)
         self.ay_values.append(f_ay)
         self.az_values.append(f_az)
+        accel_logger.info('%.2f,%.2f,%.2f',f_ax,f_ay,f_az)
 
         # Take magnitude of acceleration data
         a_mag = math.sqrt(f_ax**2 + f_ay**2 + f_az**2)
