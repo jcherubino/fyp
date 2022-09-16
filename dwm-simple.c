@@ -121,7 +121,7 @@ void LISDH12_read_acc_values(int16_t *ax, int16_t *ay, int16_t *az) {
 
 #define FREE_FALL_POLL_INTERVAL   1000000U //us = every second (1Hz)
 #define POS_POLL_INTERVAL         100000U //us = every 100ms (10Hz)
-#define ACC_POLL_INTERVAL         20000U //us = every 20ms (50Hz)
+#define ACC_POLL_INTERVAL         10000U //us = every 10ms (100Hz)
 
 /**
  * Application thread
