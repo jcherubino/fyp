@@ -33,9 +33,9 @@ LPF_CUTOFF_HIGH = 15 #Hz
 LPF_ORDER = 12
 GAIN_FACTOR = 500
 
-L = 800 #window size for rolling calculations
+L = 600 #window size for rolling calculations
 
-RMS_THRESHOLD = 3
+RMS_THRESHOLD = 2.5
 SNR_THRESHOLD = 16 #db
 
 
@@ -47,7 +47,7 @@ C = 0
 
 TAG_POLL_INTERVAL = 1/ACC_SAMPLE_RATE * 1000 # ms
 #analyse using overlapping samples for good FFT frequency resolution and decent (1Hz) fft update rate
-MOTION_ANALYSIS_INTERVAL = 1/ACC_SAMPLE_RATE * 1000 * L/8
+MOTION_ANALYSIS_INTERVAL = 1/ACC_SAMPLE_RATE * 1000 * L/6
 GRAPH_UPDATE_INTERVAL = 140 #ms
 
 MEASURE_CONFIDENCE = 0.4
