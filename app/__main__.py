@@ -15,6 +15,7 @@ import sys
 import numpy as np
 import math
 from scipy.signal import butter, sosfilt
+from scipy.ndimage import median_filter
 from functools import partial
 from collections import deque
 from statistics import fmean, StatisticsError
@@ -27,19 +28,26 @@ logger = logging.getLogger(__name__)
 pos_logger = logging.getLogger('pos_logger')
 accel_logger = logging.getLogger('accel_logger')
 
-ACC_SAMPLE_RATE = 50 # Hz
+ACC_SAMPLE_RATE = 100 # Hz
 LPF_CUTOFF_HIGH = 15 #Hz
-LPF_CUTOFF_LOW = 0.1 #Hz
-NYQ_FREQ = 0.5*ACC_SAMPLE_RATE
 LPF_ORDER = 12
+GAIN_FACTOR = 500
 
-L = 100 #window size for rolling calculations
+L = 800 #window size for rolling calculations
 
-RMS_THRESHOLD = 4
-FFT_THRESHOLD = 1
-FFT_RELATIVE_PEAK_PERCENT = 20 # %
+RMS_THRESHOLD = 3
+SNR_THRESHOLD = 16 #db
 
-TAG_POLL_INTERVAL = 20 # ms
+
+# Parameters for step length estimation
+HEIGHT = 1.85 * 1000 #in mm
+A = 0
+B = 0
+C = 0
+
+TAG_POLL_INTERVAL = 1/ACC_SAMPLE_RATE * 1000 # ms
+#analyse using overlapping samples for good FFT frequency resolution and decent (1Hz) fft update rate
+MOTION_ANALYSIS_INTERVAL = 1/ACC_SAMPLE_RATE * 1000 * L/8
 GRAPH_UPDATE_INTERVAL = 140 #ms
 
 MEASURE_CONFIDENCE = 0.4
@@ -70,9 +78,6 @@ class Worker(QObject):
         self.a_values = deque(maxlen=L) # before removing DC component - required for mean calculations.
         self.a_ac_values = deque(maxlen=L)
 
-        self.rms_values = deque(maxlen=L)
-        self.rms_mean = 0
-
         # set-up LPF
         sosx = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
         sosy = butter(LPF_ORDER, LPF_CUTOFF_HIGH, btype='low', fs=ACC_SAMPLE_RATE, output='sos')
@@ -99,11 +104,7 @@ class Worker(QObject):
 
         self.fft = self.fft_freq = None
 
-        self.fft_peak_frequency = None
-
-        self.a = 0.01
-        self.b = 0
-        self.L = 1.00*1000 # metre in mm
+        self.step_frequency = None
 
         self.step_length = None
         self.predicted_x = self.predicted_y = None
@@ -161,12 +162,13 @@ class Worker(QObject):
             self.predicted_x = self.predicted_y = None
 
         # Digital low pass filter values
-        f_ax = self.LPFS['x']([ax])[0]
-        f_ay = self.LPFS['y']([ay])[0]
-        f_az = self.LPFS['z']([az])[0]
+        f_ax = self.LPFS['x']([ax])[0]*GAIN_FACTOR
+        f_ay = self.LPFS['y']([ay])[0]*GAIN_FACTOR
+        f_az = self.LPFS['z']([az])[0]*GAIN_FACTOR
         self.ax_values.append(f_ax)
         self.ay_values.append(f_ay)
         self.az_values.append(f_az)
+
         accel_logger.info('%.2f,%.2f,%.2f',f_ax,f_ay,f_az)
 
         # Take magnitude of acceleration data
@@ -183,13 +185,7 @@ class Worker(QObject):
             a_mag_ac = 0
             mean_val = 0
         
-        # compute RMS
         self.a_ac_values.append(a_mag_ac)
-
-        a_ac_arr = np.array(self.a_ac_values)
-
-        rms = np.sqrt(1/len(self.a_ac_values) * np.sum(a_ac_arr**2))
-        self.rms_values.append(rms)
 
         self.prev_x.append(self.px)
         self.prev_y.append(self.py)
@@ -199,59 +195,60 @@ class Worker(QObject):
     def analyse_motion(self):
         mutex.lock()
         # Compute fft
+        # Apply median filtering to remove noise spikes
         a_ac_arr = np.array(self.a_ac_values)
-        a_ac_mean_val = np.mean(a_ac_arr)
+        #a_ac_arr = median_filter(a_ac_arr, size=3)
 
-        self.fft = np.abs(np.fft.rfft(a_ac_arr) / a_ac_arr.size)
+        self.fft = np.abs(np.fft.rfft(a_ac_arr) / a_ac_arr.size).real
         self.fft_freq = ACC_SAMPLE_RATE * np.fft.rfftfreq(a_ac_arr.shape[-1])
 
-        #Infer motion status
-        self.rms_mean = np.mean(self.rms_values)
-        
-        # store initial peak frequency
-        self.fft_peak_frequency = self.fft_freq[np.argmax(self.fft.real)]
+        self.step_frequency  = None
+        self.step_length = None
 
-        if self.rms_mean > RMS_THRESHOLD:
-            # Take fft data. Find top 2 peaks. 
-            idxs = np.argpartition(self.fft.real, -2)[-2:]
-            sorted_idx = idxs[np.argsort(self.fft.real[idxs])][::-1]
-            # if top peak below abs threshold, but we had sufficient
-            # RMS value, consider motion erratic
-            if self.fft.real[sorted_idx[0]] < FFT_THRESHOLD:
-                self.motion_status = MotionStatus.ERRATIC
-                logger.info('RMS exceeded threshold but FFT peak did not. Motion deemed erratic')
-            else:
-                # if top peak isn't FFT_RELATIVE_PEAK_PERCENT larger than 2nd, consider
-                # motion erratic as no clear frequency
-                top_mag = self.fft.real[sorted_idx[0]] 
-                second_mag = self.fft.real[sorted_idx[1]]
-                print(top_mag, second_mag)
-                diff = top_mag - second_mag #always positive because we abs fft values
-                if diff > (top_mag/100 * FFT_RELATIVE_PEAK_PERCENT):
-                    logger.info('Walking motion detected')
-                    self.motion_status = MotionStatus.WALKING
-                    # save peak for step length estimation
-                    self.fft_peak_frequency = self.fft_freq[sorted_idx[0]]
-                    logger.debug("FFT peak frequency: %f", self.fft_peak_frequency)
-                else:
-                    logger.info('Relative difference of FFT peaks insufficent. Expected %f, got %f', top_mag/100*FFT_RELATIVE_PEAK_PERCENT, diff)
-                    self.motion_status = MotionStatus.ERRATIC
-        else:
-            # Take fft data. Find top 2 peaks. 
-            idxs = np.argpartition(self.fft.real, -2)[-2:]
-            sorted_idx = idxs[np.argsort(self.fft.real[idxs])]
-            # if top peak above abs threshold, but we had insufficient
-            # RMS value, consider motion erratic
-            if self.fft.real[sorted_idx[0]] > FFT_THRESHOLD:
-                self.motion_status = MotionStatus.ERRATIC
-                logger.info('FFT exceeded threshold but RMS peak did not. Motion deemed erratic')
-            else:
-                logger.info('Motion deemed stationary')
-                self.motion_status = MotionStatus.STATIONARY
+        #Infer motion status
+        # Stationary versus motion
+        self.rms = np.sqrt(1/a_ac_arr.size * np.sum(a_ac_arr**2))
         
-        # Use linear motion model to compute step length
-        self.step_length = self.a * self.L * self.fft_peak_frequency + self.b
-        logger.info("Predicted step length: %f", self.step_length)
+        if self.rms <= RMS_THRESHOLD:
+            # stationary
+            logger.info('RMS: %f. Motion stationary', self.rms)
+            self.motion_status = MotionStatus.STATIONARY
+            self.motion_analysed.emit()
+            mutex.unlock()
+            return
+        
+        # Categorise erratic or walking motion
+
+        # extract peak magnitude between 0.7 and 3 Hz
+        possible_walk_frequencies = np.ma.masked_outside(self.fft_freq, 0.7, 3)
+        possible_walk_magnitudes = np.ma.masked_where(possible_walk_frequencies.mask, self.fft)
+
+        # find maximum magnitude in this range (frequency at which this occurs is the walk frequency)
+        max_index = np.argmax(possible_walk_magnitudes)
+        peak_mag = possible_walk_magnitudes[max_index]
+
+        # Compute SNR where signal is the peak magnitude and everything else
+        # in spectrum is noise.
+        # N.B. only consider within possible walking range of 0.7 to 3Hz
+        signal_power = peak_mag**2
+        # compute noise power as average of other signals 
+        noise_power = (np.sum(self.fft**2) - signal_power)/(self.fft.size - 1)
+
+        SNR = 10*np.log10(signal_power/noise_power)
+
+        # erratic motion
+        if SNR <= SNR_THRESHOLD:
+            logger.info('RMS: %f. SNR: %f. Motion erratic', self.rms, SNR)
+            self.motion_status = MotionStatus.ERRATIC
+        else:
+            logger.info('RMS: %f. SNR: %f. Motion walking', self.rms, SNR)
+            self.motion_status = MotionStatus.WALKING
+            
+            self.step_frequency = possible_walk_frequencies[max_index]
+
+            # Use linear motion model to compute step length
+            self.step_length = HEIGHT * (A*self.step_frequency + B) + C
+            logger.info("Step frequency: %f. Step length: %f", self.step_frequency, self.step_length)
 
         self.motion_analysed.emit()
         mutex.unlock()
@@ -327,22 +324,15 @@ class MainWindow(QWidget):
         self.acceleration_ac_graph.setXRange(0, L)
 
         self.a_ac_plot = self.acceleration_ac_graph.plot([], [])
-
-        self.rms_graph = PlotWidget(title='Acceleration magnitude RMS')
-        self.rms_graph.setBackground('w')
+        self.acceleration_ac_graph.addLine(x=None, y=RMS_THRESHOLD, pen=mkPen('r', width=1))
+        self.rms_line = self.acceleration_ac_graph.addLine(x=None, y=0, pen=mkPen('g', width=1))
+        
         self.fft_graph = PlotWidget(title='FFT of acceleration magnitude')
         self.fft_graph.setBackground('w')
 
-        accel_layout.addWidget(self.rms_graph)
         accel_layout.addWidget(self.fft_graph)
 
-        self.rms_graph.setXRange(0, L)
-
-        self.rms_plot = self.rms_graph.plot([], [])
-        self.rms_graph.addLine(x=None, y=RMS_THRESHOLD, pen=mkPen('r', width=1))
-        self.rms_mean_line = self.rms_graph.addLine(x=None, y=0, pen=mkPen('g', width=1))
         self.fft_plot = self.fft_graph.plot([], [])
-        self.fft_graph.addLine(x=None, y=FFT_THRESHOLD, pen=mkPen('r', width=1))
 
         # setup timers and worker
         self.worker = Worker(port)
@@ -355,8 +345,7 @@ class MainWindow(QWidget):
         self.motion_analysis_timer.moveToThread(self.thread)
 
         self.poll_timer.setInterval(TAG_POLL_INTERVAL)
-        # only analyse motion every window interval
-        self.motion_analysis_timer.setInterval(L*(1000/ACC_SAMPLE_RATE))
+        self.motion_analysis_timer.setInterval(MOTION_ANALYSIS_INTERVAL)
 
         self.poll_timer.timeout.connect(self.worker.poll)
         self.motion_analysis_timer.timeout.connect(self.worker.analyse_motion)
@@ -434,9 +423,11 @@ class MainWindow(QWidget):
 
         # Update rms and fft plots
         if self.worker.fft is not None:
-            self.rms_plot.setData(range(len(self.worker.rms_values)), self.worker.rms_values)
-            self.rms_mean_line.setValue(self.worker.rms_mean)
-            self.fft_plot.setData(self.worker.fft_freq, self.worker.fft.real)
+            self.rms_line.setValue(self.worker.rms)
+            mask = self.worker.fft_freq < 15
+
+            self.fft_plot.setData(self.worker.fft_freq[mask], self.worker.fft[mask])
+            #self.fft_plot.setData(self.worker.fft_freq, self.worker.fft)
 
             # Update motion status
 
