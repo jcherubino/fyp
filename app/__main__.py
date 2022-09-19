@@ -38,19 +38,18 @@ L = 600 #window size for rolling calculations
 RMS_THRESHOLD = 2.5
 SNR_THRESHOLD = 16 #db
 
+N_SAMPLES_FOR_MOVEMENT_DIRECTION = 150 #how many samples to use to infer movement direction
 
 # Parameters for step length estimation
-HEIGHT = 1.85 * 1000 #in mm
-A = 0
-B = 0
-C = 0
+A = 0.868
+B = -0.716
 
-TAG_POLL_INTERVAL = 1/ACC_SAMPLE_RATE * 1000 # ms
+TAG_POLL_INTERVAL = 5 #1/ACC_SAMPLE_RATE * 1000 # ms
 #analyse using overlapping samples for good FFT frequency resolution and decent (1Hz) fft update rate
 MOTION_ANALYSIS_INTERVAL = 1/ACC_SAMPLE_RATE * 1000 * L/6
 GRAPH_UPDATE_INTERVAL = 140 #ms
 
-MEASURE_CONFIDENCE = 0.4
+MEASURE_CONFIDENCE = 0.9
 
 mutex = QMutex()
 
@@ -97,8 +96,8 @@ class Worker(QObject):
         self.rolling_x = []
         self.rolling_y = []
 
-        self.prev_x = deque(maxlen=5)
-        self.prev_y = deque(maxlen=5)
+        self.prev_x = deque(maxlen=N_SAMPLES_FOR_MOVEMENT_DIRECTION)
+        self.prev_y = deque(maxlen=N_SAMPLES_FOR_MOVEMENT_DIRECTION)
 
         self.movement_direction = None
 
@@ -144,12 +143,18 @@ class Worker(QObject):
             self.fall_px, self.fall_py = self.px, self.py
         
         # infer direction of motion from subsequent samples
-        try:
-            delta_x = self.prev_x[0] - self.px
-            delta_y = self.prev_y[0] - self.py
-            self.movement_direction = np.degrees(np.arctan2(delta_y, delta_x))
-            self.movement_direction = -np.sign(self.movement_direction)*(180 - abs(self.movement_direction))
-        except:
+        if len(self.prev_x) > 0:
+            # Take of inferred direction of all recorded previous samples and
+            # average to reduce noise in direction estimation
+            cumulative_movement_direction = 0
+            for (past_x, past_y) in zip(self.prev_x, self.prev_y):
+                delta_x = past_x - self.px
+                delta_y = past_y - self.py
+                tmp_movement_direction = np.degrees(np.arctan2(delta_y, delta_x))
+                tmp_movement_direction = -np.sign(tmp_movement_direction)*(180 - abs(tmp_movement_direction))
+                cumulative_movement_direction += tmp_movement_direction
+            self.movement_direction = cumulative_movement_direction / len(self.prev_x)
+        else:
             # if we don't have previous position sample
             # then we cannot infer angle
             logger.debug("Missing previous samples, no movement direction set")
@@ -247,7 +252,7 @@ class Worker(QObject):
             self.step_frequency = possible_walk_frequencies[max_index]
 
             # Use linear motion model to compute step length
-            self.step_length = HEIGHT * (A*self.step_frequency + B) + C
+            self.step_length = (A*self.step_frequency + B)*1000 # step length in mm
             logger.info("Step frequency: %f. Step length: %f", self.step_frequency, self.step_length)
 
         self.motion_analysed.emit()
@@ -281,8 +286,10 @@ class MainWindow(QWidget):
         # initially hidden
         self.movement_direction_arrow.setVisible(False)
 
-        self.plot_widget.setXRange(min(ANCHOR_X), max(ANCHOR_X))
-        self.plot_widget.setYRange(min(ANCHOR_Y), max(ANCHOR_Y))
+        #self.plot_widget.setXRange(min(ANCHOR_X), max(ANCHOR_X))
+        #self.plot_widget.setYRange(min(ANCHOR_Y), max(ANCHOR_Y))
+        self.plot_widget.setXRange(-4000, 10000)
+        self.plot_widget.setYRange(0, 15000)
 
         self.quality_label = QLabel('0')
         self.quality_slider = QSlider(Qt.Horizontal)
