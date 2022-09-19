@@ -38,7 +38,7 @@ L = 600 #window size for rolling calculations
 RMS_THRESHOLD = 2.5
 SNR_THRESHOLD = 16 #db
 
-N_SAMPLES_FOR_MOVEMENT_DIRECTION = 150 #how many samples to use to infer movement direction
+N_SAMPLES_FOR_MOVEMENT_DIRECTION = 200 #how many samples to use to infer movement direction
 
 # Parameters for step length estimation
 A = 0.868
@@ -49,7 +49,7 @@ TAG_POLL_INTERVAL = 5 #1/ACC_SAMPLE_RATE * 1000 # ms
 MOTION_ANALYSIS_INTERVAL = 1/ACC_SAMPLE_RATE * 1000 * L/6
 GRAPH_UPDATE_INTERVAL = 140 #ms
 
-MEASURE_CONFIDENCE = 0.9
+MEASURE_CONFIDENCE = 0.75
 
 mutex = QMutex()
 
@@ -125,9 +125,9 @@ class Worker(QObject):
             self.px = measured_x
             self.py = measured_y
         if self.predicted_x is not None and self.movement_direction is not None and self.step_length is not None:
-            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, self.predicted_x, self.predicted_y, self.movement_direction, self.step_length, self.motion_status.name)
+            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, self.qf, self.predicted_x, self.predicted_y, self.movement_direction, self.step_length, self.motion_status.name)
         else:
-            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, float('nan'), float('nan'), float('nan'), float('nan'), self.motion_status.name)
+            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, self.qf, float('nan'), float('nan'), float('nan'), float('nan'), self.motion_status.name)
 
         # if stationary we take rolling average so store pos values
         if self.motion_status == MotionStatus.STATIONARY:
