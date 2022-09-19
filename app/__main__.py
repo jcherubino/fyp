@@ -124,10 +124,10 @@ class Worker(QObject):
         else:
             self.px = measured_x
             self.py = measured_y
-        if self.predicted_x is not None:
-            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, self.predicted_x, self.predicted_y, self.motion_status.name)
+        if self.predicted_x is not None and self.movement_direction is not None and self.step_length is not None:
+            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, self.predicted_x, self.predicted_y, self.movement_direction, self.step_length, self.motion_status.name)
         else:
-            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, float('nan'), float('nan'), self.motion_status.name)
+            pos_logger.info('%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%s', measured_x, measured_y, float('nan'), float('nan'), float('nan'), float('nan'), self.motion_status.name)
 
         # if stationary we take rolling average so store pos values
         if self.motion_status == MotionStatus.STATIONARY:
