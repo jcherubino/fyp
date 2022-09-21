@@ -27,14 +27,14 @@ LOG_DICT_CONFIG = {
             },
         'acceleration_handler': {
             'level': 'DEBUG',
-            'filename': 'acceleration.log',
+            'filename': 'acceleration.csv',
             'class': 'logging.FileHandler',
             'formatter': 'data_logging',
             'mode': 'a',
             },
         'position_handler': {
             'level': 'DEBUG',
-            'filename': 'position.log',
+            'filename': 'position.csv',
             'class': 'logging.FileHandler',
             'formatter': 'data_logging',
             'mode': 'a',

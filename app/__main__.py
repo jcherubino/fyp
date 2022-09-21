@@ -38,7 +38,7 @@ L = 600 #window size for rolling calculations
 RMS_THRESHOLD = 2.5
 SNR_THRESHOLD = 16 #db
 
-N_SAMPLES_FOR_MOVEMENT_DIRECTION = 200 #how many samples to use to infer movement direction
+N_SAMPLES_FOR_MOVEMENT_DIRECTION = 400 #how many samples to use to infer movement direction
 
 # Parameters for step length estimation
 A = 0.868
@@ -49,7 +49,7 @@ TAG_POLL_INTERVAL = 5 #1/ACC_SAMPLE_RATE * 1000 # ms
 MOTION_ANALYSIS_INTERVAL = 1/ACC_SAMPLE_RATE * 1000 * L/6
 GRAPH_UPDATE_INTERVAL = 140 #ms
 
-MEASURE_CONFIDENCE = 0.75
+MEASURE_CONFIDENCE = 0.01
 
 mutex = QMutex()
 
@@ -144,6 +144,7 @@ class Worker(QObject):
         
         # infer direction of motion from subsequent samples
         if len(self.prev_x) > 0:
+            '''
             # Take of inferred direction of all recorded previous samples and
             # average to reduce noise in direction estimation
             cumulative_movement_direction = 0
@@ -154,6 +155,15 @@ class Worker(QObject):
                 tmp_movement_direction = -np.sign(tmp_movement_direction)*(180 - abs(tmp_movement_direction))
                 cumulative_movement_direction += tmp_movement_direction
             self.movement_direction = cumulative_movement_direction / len(self.prev_x)
+            '''
+            try:
+                delta_x = self.prev_x[-20] - self.px
+                delta_y = self.prev_y[-20] - self.py
+                self.movement_direction = np.degrees(np.arctan2(delta_y, delta_x))
+                self.movement_direction = -np.sign(self.movement_direction)*(180 - abs(self.movement_direction))
+            except IndexError:
+                logger.error("exception occurred")
+                self.movement_direction = None
         else:
             # if we don't have previous position sample
             # then we cannot infer angle
@@ -161,8 +171,9 @@ class Worker(QObject):
             self.movement_direction = None
         # then infer next position using estimated step length and direction
         if self.step_length is not None and self.movement_direction is not None:
-            self.predicted_x = self.prev_x[-1] + np.cos(np.radians(self.movement_direction)) * self.step_length
-            self.predicted_y = self.prev_y[-1] + np.sin(np.radians(self.movement_direction)) * self.step_length
+            # FIXME
+            self.predicted_x = self.prev_x[-1] + np.cos(np.radians(self.movement_direction)) * self.step_velocity * 10/1000 #(TAG_POLL_INTERVAL/1000)
+            self.predicted_y = self.prev_y[-1] + np.sin(np.radians(self.movement_direction)) * self.step_velocity * 10/1000 #(TAG_POLL_INTERVAL/1000)
         else:
             self.predicted_x = self.predicted_y = None
 
@@ -253,6 +264,7 @@ class Worker(QObject):
 
             # Use linear motion model to compute step length
             self.step_length = (A*self.step_frequency + B)*1000 # step length in mm
+            self.step_velocity = self.step_length / self.step_frequency
             logger.info("Step frequency: %f. Step length: %f", self.step_frequency, self.step_length)
 
         self.motion_analysed.emit()
@@ -393,7 +405,7 @@ class MainWindow(QWidget):
         else:
             self.rolling_tag_plot.setData([], [])
 
-        if self.worker.motion_status == MotionStatus.WALKING:
+        if self.worker.motion_status == MotionStatus.WALKING and self.worker.movement_direction is not None:
             # add 180 to account for offset (0 degrees points left)
             self.movement_direction_arrow.setStyle(angle=180-self.worker.movement_direction)
             self.movement_direction_arrow.setPos(self.worker.px, self.worker.py)
